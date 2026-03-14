@@ -1,3 +1,4 @@
+
 """
 app/controls.py – Bottom control strip for the Davidic Lyre.
 

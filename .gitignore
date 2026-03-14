@@ -1,36 +1,35 @@
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
-.pytest_cache/
+*$py.class
+*.so
 *.egg-info/
 dist/
 build/
-.eggs/
+eggs/
 *.egg
 
 # Virtual environments
-venv/
 .venv/
+venv/
 env/
 
-# Buildozer
+# Buildozer / Android
 .buildozer/
 bin/
 
-# Android build output
-*.apk
-*.aab
-
 # IDE
-.idea/
 .vscode/
+.idea/
 *.swp
 *.swo
+*~
 
-# macOS
+# OS
 .DS_Store
+Thumbs.db
 
-# Coverage
+# Testing
+.pytest_cache/
 .coverage
 htmlcov/

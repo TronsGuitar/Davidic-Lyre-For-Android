@@ -117,3 +117,14 @@ class TouchTrace:
         """Update current position and timestamp."""
         self.current_pos = pos
         self.current_time = t
+
+    """Tracks a single touch interaction across its lifetime."""
+
+    touch_id: int
+    start_pos: tuple[float, float] = (0.0, 0.0)
+    current_pos: tuple[float, float] = (0.0, 0.0)
+    start_time: float = 0.0
+    current_time: float = 0.0
+    crossed_strings: list[int] = field(default_factory=list)
+    hold_active: bool = False
+
