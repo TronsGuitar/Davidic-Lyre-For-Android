@@ -1,1 +1,1 @@
-"""Davidic Lyre for Android - A touch-based digital lyre app."""
+# Davidic Lyre for Android – app package

@@ -1,236 +1,336 @@
-"""Kivy widget that renders the lyre and handles touch events."""
+"""
+app/lyre_widget.py – Kivy widget that draws the lyre and routes touch events.
 
-from __future__ import annotations
+The LyreWidget is responsible for:
+  - Drawing the wooden body, arms, crossbar and strings on its Canvas.
+  - Updating string positions when its size changes.
+  - Forwarding touch events to the GestureRecognizer.
+  - Running per-frame string vibration animations.
+  - Drawing optional note labels.
+"""
 
 import time
-from math import sin
 
-from kivy.clock import Clock
-from kivy.graphics import Color, Line, Rectangle
-from kivy.uix.widget import Widget
+from kivy.clock import Clock  # type: ignore
+from kivy.graphics import (  # type: ignore
+    Color,
+    Ellipse,
+    Line,
+    Rectangle,
+    RoundedRectangle,
+)
+from kivy.uix.widget import Widget  # type: ignore
 
 from app.audio_engine import AudioEngine
 from app.config import (
-    ARM_WIDTH,
-    COLOR_ARM,
-    COLOR_BODY,
-    COLOR_STRING,
-    COLOR_STRING_MUTED,
-    CROSSBAR_WIDTH,
-    FRAME_BOTTOM_H,
-    FRAME_BOTTOM_Y,
-    FRAME_LEFT_X_BOTTOM,
-    FRAME_LEFT_X_TOP,
-    FRAME_RIGHT_X_BOTTOM,
-    FRAME_RIGHT_X_TOP,
-    HOLD_THRESHOLD,
-    STRING_BOTTOM,
-    STRING_LEFT,
-    STRING_RIGHT,
-    STRING_THICKNESSES,
-    STRING_TOP,
-    TARGET_FPS,
-    VIBRATION_BASE,
+    ARM_WIDTH_PX,
+    COLORS,
+    CROSSBAR_HEIGHT_PX,
+    DEFAULT_LABELS_ON,
+    DEFAULT_LEFT_HAND,
+    NUM_STRINGS,
+    RESONATOR_HEIGHT_RATIO,
+    RESONATOR_TOP_RATIO,
+    STRING_AREA_BOTTOM_RATIO,
+    STRING_AREA_TOP_RATIO,
+    STRING_HITBOX_HALF_WIDTH_PX,
+    STRING_MARGIN_RATIO,
+    STRING_THICKNESSES_PX,
     VIBRATION_DECAY,
-    VIBRATION_FREQ,
-    VIBRATION_MAX,
-    VIBRATION_MIN,
+    VIBRATION_MAX_AMP,
 )
-from app.gestures import strings_crossed, swipe_velocity
+from app.gestures import GestureRecognizer
 from app.models import LyreString
+from app.tuning import DEFAULT_PRESET, TuningPreset
 
 
 class LyreWidget(Widget):
-    """Main instrument widget: draws the lyre body and strings and routes
-    touch events to the gesture / audio layer."""
+    """
+    The central instrument widget.
 
-    def __init__(self, audio_engine: AudioEngine | None = None, **kwargs):
+    Public API::
+
+        widget.load_preset(preset)   # switch tuning
+        widget.set_labels(on: bool)  # toggle note labels
+        widget.set_left_hand(on: bool)
+
+    The widget fires audio via an AudioEngine instance which must be
+    passed at construction or set via ``widget.audio_engine``.
+    """
+
+    def __init__(self, audio_engine: AudioEngine, **kwargs):
         super().__init__(**kwargs)
-        self.audio_engine = audio_engine or AudioEngine()
-        self.strings: list[LyreString] = []
-        self.touch_state: dict[int, dict] = {}
-        Clock.schedule_interval(self._update_frame, 1 / TARGET_FPS)
+        self.audio_engine: AudioEngine = audio_engine
+        self._preset: TuningPreset = DEFAULT_PRESET
+        self._strings: list[LyreString] = []
+        self._gesture: GestureRecognizer = GestureRecognizer([])
+        self._labels_on: bool = DEFAULT_LABELS_ON
+        self._left_hand: bool = DEFAULT_LEFT_HAND
 
-    # --- String Management -------------------------------------------------
+        # Wire gesture callbacks
+        self._gesture.on_pluck  = self._on_pluck
+        self._gesture.on_mute   = self._on_mute
+        self._gesture.on_unmute = self._on_unmute
 
-    def set_strings(self, notes: list[str], frequencies: list[float]) -> None:
-        """Create ``LyreString`` objects for the given tuning."""
-        self.strings = [
-            LyreString(
-                idx=i,
-                note=note,
+        self.bind(size=self._rebuild, pos=self._rebuild)
+
+        # Animation clock – 60 fps
+        Clock.schedule_interval(self._tick, 1.0 / 60.0)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def load_preset(self, preset: TuningPreset) -> None:
+        """Switch to a new tuning preset."""
+        self._preset = preset
+        self._rebuild()
+
+    def set_labels(self, on: bool) -> None:
+        self._labels_on = on
+        self._rebuild()
+
+    def set_left_hand(self, on: bool) -> None:
+        self._left_hand = on
+        self._rebuild()
+
+    # ------------------------------------------------------------------
+    # Geometry helpers
+    # ------------------------------------------------------------------
+
+    def _compute_string_positions(self) -> list[LyreString]:
+        w, h = self.width, self.height
+        if w == 0 or h == 0:
+            return []
+
+        margin  = w * STRING_MARGIN_RATIO
+        usable  = w - 2 * margin
+        spacing = usable / (NUM_STRINGS - 1) if NUM_STRINGS > 1 else usable
+        y_top   = h * STRING_AREA_TOP_RATIO + CROSSBAR_HEIGHT_PX
+        y_bot   = h * STRING_AREA_BOTTOM_RATIO
+
+        strings: list[LyreString] = []
+        for i in range(NUM_STRINGS):
+            idx = i if not self._left_hand else (NUM_STRINGS - 1 - i)
+            note = self._preset.notes[idx]
+            freq = self._preset.frequencies[idx]
+            x    = margin + i * spacing + self.x
+            th   = STRING_THICKNESSES_PX[idx]
+
+            s = LyreString(
+                id=idx,
+                note_name=note,
                 frequency=freq,
-                thickness=STRING_THICKNESSES[i] if i < len(STRING_THICKNESSES) else 2.0,
+                x=x,
+                y_top=y_top + self.y,
+                y_bottom=y_bot + self.y,
+                thickness_px=th,
+                hitbox_width_px=STRING_HITBOX_HALF_WIDTH_PX * 2,
+                sample_path=f"lyre_{note.replace('#', 's')}.wav",
             )
-            for i, (note, freq) in enumerate(zip(notes, frequencies))
-        ]
-        self._layout_strings()
+            strings.append(s)
 
-    # --- Layout ------------------------------------------------------------
+        return strings
 
-    def _layout_strings(self) -> None:
-        left = self.x + self.width * STRING_LEFT
-        right = self.x + self.width * STRING_RIGHT
-        top = self.y + self.height * STRING_TOP
-        bottom = self.y + self.height * STRING_BOTTOM
+    # ------------------------------------------------------------------
+    # Drawing
+    # ------------------------------------------------------------------
 
-        n = len(self.strings)
-        for i, s in enumerate(self.strings):
-            t = i / (n - 1) if n > 1 else 0.5
-            s.x = left + (right - left) * t
-            s.y_top = top
-            s.y_bottom = bottom
+    def _rebuild(self, *_args) -> None:
+        self._strings = self._compute_string_positions()
+        self._gesture = GestureRecognizer(self._strings)
+        self._gesture.on_pluck  = self._on_pluck
+        self._gesture.on_mute   = self._on_mute
+        self._gesture.on_unmute = self._on_unmute
+        self._draw()
 
-    def on_size(self, *_args):
-        self._layout_strings()
-        self._redraw()
-
-    def on_pos(self, *_args):
-        self._layout_strings()
-        self._redraw()
-
-    # --- Drawing -----------------------------------------------------------
-
-    def _redraw(self) -> None:
+    def _draw(self) -> None:
         self.canvas.clear()
+        w, h = self.width, self.height
+        if w == 0 or h == 0:
+            return
+
         with self.canvas:
-            # Lower resonator body
-            Color(*COLOR_BODY)
-            Rectangle(
-                pos=(self.x + self.width * STRING_LEFT - self.width * 0.03,
-                     self.y + self.height * FRAME_BOTTOM_Y),
-                size=(self.width * (STRING_RIGHT - STRING_LEFT + 0.06),
-                      self.height * FRAME_BOTTOM_H),
+            self._draw_body(w, h)
+            self._draw_strings()
+            if self._labels_on:
+                self._draw_labels()
+
+    def _draw_body(self, w: float, h: float) -> None:
+        """Draw resonator, arms, and crossbar."""
+        lw  = COLORS["light_wood"]
+        mw  = COLORS["medium_wood"]
+        dw  = COLORS["dark_wood"]
+        hw  = COLORS["highlight_wear"]
+
+        # --- resonator (rounded lower body) ---
+        res_top = h * RESONATOR_TOP_RATIO + self.y
+        res_h   = h * RESONATOR_HEIGHT_RATIO
+        res_w   = w * 0.70
+        res_x   = self.x + (w - res_w) / 2
+
+        Color(*dw)
+        RoundedRectangle(
+            pos=(res_x, res_top - res_h),
+            size=(res_w, res_h),
+            radius=[res_w * 0.45, res_w * 0.45, res_w * 0.15, res_w * 0.15],
+        )
+        Color(*mw)
+        RoundedRectangle(
+            pos=(res_x + 6, res_top - res_h + 6),
+            size=(res_w - 12, res_h - 12),
+            radius=[res_w * 0.42, res_w * 0.42, res_w * 0.12, res_w * 0.12],
+        )
+        # highlight stripe
+        Color(*hw)
+        Rectangle(
+            pos=(res_x + res_w * 0.35, res_top - res_h + 10),
+            size=(res_w * 0.08, res_h * 0.55),
+        )
+
+        # --- arms (two upright posts) ---
+        arm_y_bottom = res_top
+        arm_y_top    = h * STRING_AREA_TOP_RATIO + self.y
+        arm_h        = arm_y_bottom - arm_y_top
+
+        left_arm_x  = res_x
+        right_arm_x = res_x + res_w - ARM_WIDTH_PX
+
+        Color(*dw)
+        Rectangle(pos=(left_arm_x,  arm_y_top), size=(ARM_WIDTH_PX, arm_h))
+        Rectangle(pos=(right_arm_x, arm_y_top), size=(ARM_WIDTH_PX, arm_h))
+        Color(*lw)
+        Rectangle(pos=(left_arm_x  + 3, arm_y_top + 4), size=(ARM_WIDTH_PX - 6, arm_h - 8))
+        Rectangle(pos=(right_arm_x + 3, arm_y_top + 4), size=(ARM_WIDTH_PX - 6, arm_h - 8))
+
+        # --- crossbar ---
+        cross_y = arm_y_top
+        Color(*dw)
+        Rectangle(pos=(left_arm_x, cross_y), size=(res_w, CROSSBAR_HEIGHT_PX))
+        Color(*lw)
+        Rectangle(pos=(left_arm_x + 2, cross_y + 3), size=(res_w - 4, CROSSBAR_HEIGHT_PX - 6))
+
+        # --- sound hole on resonator ---
+        hole_r = res_w * 0.08
+        hole_cx = res_x + res_w / 2
+        hole_cy = res_top - res_h * 0.55
+        Color(*dw)
+        Ellipse(
+            pos=(hole_cx - hole_r, hole_cy - hole_r),
+            size=(hole_r * 2, hole_r * 2),
+        )
+
+    def _draw_strings(self) -> None:
+        """Draw each string as a coloured line with vibration offset."""
+        for s in self._strings:
+            # Colour: lighter/thinner for high strings, darker for low
+            t = s.id / (NUM_STRINGS - 1)   # 0 (low) → 1 (high)
+            lr = COLORS["gut_string_light"]
+            dr = COLORS["gut_string_dark"]
+            r = dr[0] + t * (lr[0] - dr[0])
+            g = dr[1] + t * (lr[1] - dr[1])
+            b = dr[2] + t * (lr[2] - dr[2])
+            alpha = 0.4 if s.muted else 1.0
+
+            Color(r, g, b, alpha)
+
+            vib = s.vibration_amp * VIBRATION_MAX_AMP
+            # Wavy string: three-point polyline
+            mid_y = (s.y_top + s.y_bottom) / 2
+            Line(
+                points=[
+                    s.x, s.y_top,
+                    s.x + vib, mid_y,
+                    s.x, s.y_bottom,
+                ],
+                width=s.thickness_px / 2,
+                joint="round",
             )
 
-            # Arms
-            Color(*COLOR_ARM)
-            Line(points=[
-                self.x + self.width * FRAME_LEFT_X_BOTTOM,
-                self.y + self.height * FRAME_BOTTOM_Y + self.height * FRAME_BOTTOM_H,
-                self.x + self.width * FRAME_LEFT_X_TOP,
-                self.y + self.height * STRING_TOP,
-            ], width=ARM_WIDTH)
-            Line(points=[
-                self.x + self.width * FRAME_RIGHT_X_BOTTOM,
-                self.y + self.height * FRAME_BOTTOM_Y + self.height * FRAME_BOTTOM_H,
-                self.x + self.width * FRAME_RIGHT_X_TOP,
-                self.y + self.height * STRING_TOP,
-            ], width=ARM_WIDTH)
+            # Draw knot at crossbar
+            Color(*COLORS["dark_wood"])
+            Ellipse(
+                pos=(s.x - 3, s.y_top - 4),
+                size=(6, 6),
+            )
 
-            # Crossbar
-            Line(points=[
-                self.x + self.width * FRAME_LEFT_X_TOP,
-                self.y + self.height * STRING_TOP,
-                self.x + self.width * FRAME_RIGHT_X_TOP,
-                self.y + self.height * STRING_TOP,
-            ], width=CROSSBAR_WIDTH)
+    def _draw_labels(self) -> None:
+        """Overlay note names near the top of each string."""
+        # Labels are drawn via Kivy Label widgets added in _rebuild,
+        # but for Canvas simplicity we skip text rendering here.
+        # A full implementation would use kivy.graphics.instructions.
+        # (Requires a separate Label per string added to the widget tree.)
+        pass
 
-            # Strings
-            now = time.time()
-            for s in self.strings:
-                age = now - s.last_plucked
-                amp = max(0.0, s.vibration * (1.0 - age * VIBRATION_DECAY))
-                offset = sin(age * VIBRATION_FREQ) * amp if amp > 0 else 0
-                if s.muted:
-                    Color(*COLOR_STRING_MUTED)
-                else:
-                    Color(*COLOR_STRING)
-                Line(
-                    points=[s.x + offset, s.y_top, s.x + offset, s.y_bottom],
-                    width=s.thickness,
-                )
+    # ------------------------------------------------------------------
+    # Touch events
+    # ------------------------------------------------------------------
 
-    # --- Hit Testing -------------------------------------------------------
-
-    def find_string(self, x: float, y: float) -> LyreString | None:
-        """Return the nearest string within hitbox range, or ``None``."""
-        best: LyreString | None = None
-        best_dist = 999999.0
-        for s in self.strings:
-            if s.y_bottom <= y <= s.y_top:
-                dist = abs(x - s.x)
-                if dist < s.hitbox_width and dist < best_dist:
-                    best = s
-                    best_dist = dist
-        return best
-
-    # --- Pluck / Mute ------------------------------------------------------
-
-    def pluck_string(self, s: LyreString, velocity: float = 1.0) -> None:
-        """Trigger a pluck on *s* unless it is muted."""
-        if s.muted:
-            return
-        s.last_plucked = time.time()
-        s.vibration = max(VIBRATION_MIN, min(VIBRATION_MAX, VIBRATION_BASE * velocity))
-        s.ringing = True
-        self.audio_engine.play(s.note, velocity)
-
-    def mute_string(self, s: LyreString) -> None:
-        s.muted = True
-        s.vibration = 1.0
-        s.ringing = False
-        self.audio_engine.stop(s.note)
-
-    def unmute_string(self, s: LyreString) -> None:
-        s.muted = False
-
-    # --- Touch Events ------------------------------------------------------
-
-    def on_touch_down(self, touch):
-        if not self.collide_point(*touch.pos):
-            return super().on_touch_down(touch)
-
-        s = self.find_string(*touch.pos)
-        self.touch_state[touch.uid] = {
-            "start": touch.pos,
-            "last": touch.pos,
-            "time": time.time(),
-            "crossed": set(),
-            "string": s,
-            "hold_active": False,
-        }
-
-        if s:
-            self.pluck_string(s, velocity=1.0)
-            self.touch_state[touch.uid]["crossed"].add(s.idx)
-            return True
-
-        return super().on_touch_down(touch)
-
-    def on_touch_move(self, touch):
-        state = self.touch_state.get(touch.uid)
-        if not state:
-            return super().on_touch_move(touch)
-
-        px, py = state["last"]
-        cx, cy = touch.pos
-
-        # Strum detection
-        for hit in strings_crossed(px, py, cx, cy, self.strings):
-            if hit.idx not in state["crossed"]:
-                self.pluck_string(hit, velocity=swipe_velocity(cx - px))
-                state["crossed"].add(hit.idx)
-
-        # Hold mute detection
-        held_time = time.time() - state["time"]
-        s = self.find_string(*touch.pos)
-        if s and held_time > HOLD_THRESHOLD:
-            self.mute_string(s)
-            state["hold_active"] = True
-            state["string"] = s
-
-        state["last"] = touch.pos
+    def on_touch_down(self, touch) -> bool:
+        if not self.collide_point(touch.x, touch.y):
+            return False
+        self._gesture.touch_down(touch.uid, (touch.x, touch.y))
         return True
 
-    def on_touch_up(self, touch):
-        state = self.touch_state.pop(touch.uid, None)
-        if state and state["hold_active"] and state["string"]:
-            self.unmute_string(state["string"])
-            return True
-        return super().on_touch_up(touch)
+    def on_touch_move(self, touch) -> bool:
+        if touch.uid not in {
+            tr.touch_id for tr in self._gesture._traces.values()
+        }:
+            return False
+        self._gesture.touch_move(touch.uid, (touch.x, touch.y))
+        return True
 
-    # --- Frame Update ------------------------------------------------------
+    def on_touch_up(self, touch) -> bool:
+        if touch.uid not in {
+            tr.touch_id for tr in self._gesture._traces.values()
+        }:
+            return False
+        self._gesture.touch_up(touch.uid, (touch.x, touch.y))
+        return True
 
-    def _update_frame(self, _dt: float) -> None:
-        self._redraw()
+    # ------------------------------------------------------------------
+    # Frame tick
+    # ------------------------------------------------------------------
+
+    def _tick(self, dt: float) -> None:
+        """Advance animation and gesture hold-detection each frame."""
+        self._gesture.update()
+
+        changed = False
+        for s in self._strings:
+            if s.vibration_amp > 0.0:
+                s.tick_animation(VIBRATION_DECAY)
+                changed = True
+
+        if changed:
+            self._draw_strings_only()
+
+    def _draw_strings_only(self) -> None:
+        """Redraw only the strings layer for animation performance."""
+        # For simplicity, trigger a full redraw; a production app would
+        # use a separate canvas group for strings only.
+        self._draw()
+
+    # ------------------------------------------------------------------
+    # Gesture callbacks
+    # ------------------------------------------------------------------
+
+    def _on_pluck(self, string_id: int, velocity: float) -> None:
+        for s in self._strings:
+            if s.id == string_id:
+                s.pluck()
+                break
+        self.audio_engine.pluck(string_id, velocity)
+
+    def _on_mute(self, string_id: int) -> None:
+        for s in self._strings:
+            if s.id == string_id:
+                s.mute()
+                break
+        self.audio_engine.mute(string_id)
+
+    def _on_unmute(self, string_id: int) -> None:
+        for s in self._strings:
+            if s.id == string_id:
+                s.unmute()
+                break
