@@ -112,7 +112,6 @@ class TestAllPresets:
             assert len(p.frequencies) == 8
             for f in p.frequencies:
                 assert f > 0
-=======
 class TestTuningPreset:
     def test_default_preset_is_d_dorian(self):
         assert DEFAULT_PRESET.name == "Davidic D Dorian"
