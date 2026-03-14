@@ -1,12 +1,8 @@
 """
-app/models.py — Data model classes for the Davidic Lyre app.
+app/models.py – Core data models: LyreString, TouchTrace.
 
-Defines the core data structures used throughout the application:
-  - LyreString  — represents one physical string on the instrument
-  - TouchTrace  — tracks the lifecycle of a single touch event
-  - TuningPreset — encapsulates a named set of string notes and frequencies
-
-Field definitions follow PRD Section 15.
+These classes are pure Python (no Kivy dependency) so they can be
+instantiated and tested independently of the UI runtime.
 """
 
 from dataclasses import dataclass, field
@@ -15,87 +11,120 @@ from typing import List, Tuple
 
 @dataclass
 class LyreString:
-    """Represents one string on the lyre instrument.
-
-    Stores both the musical properties (note, frequency, sample path) and the
-    on-screen layout properties (position, hitbox dimensions) for a single string.
-
-    Attributes:
-        id: Zero-based index identifying the string (0 = lowest/leftmost).
-        note_name: Human-readable note name, e.g. ``"D2"``.
-        frequency: Fundamental frequency in Hz.
-        x: Horizontal centre position of the string on screen (pixels).
-        y_top: Y-coordinate of the top anchor point of the string (pixels).
-        y_bottom: Y-coordinate of the bottom anchor point of the string (pixels).
-        thickness_px: Visual thickness of the string drawn on canvas (pixels).
-        hitbox_width_px: Width of the invisible touch-sensitive region around
-            the string (pixels).  Should be wider than *thickness_px* to make
-            the string easy to tap.
-        muted: Whether the string is currently muted by a held finger.
-        ringing: Whether the string is currently producing sound.
-        gain: Per-string gain multiplier (0.0–1.0).
-        sample_path: Filesystem path to the WAV sample for this string.
     """
+    Represents one physical string on the lyre.
 
-    id: int = 0
-    note_name: str = ""
-    frequency: float = 0.0
-    x: float = 0.0
-    y_top: float = 0.0
-    y_bottom: float = 0.0
-    thickness_px: float = 2.0
-    hitbox_width_px: float = 40.0
+    Coordinates (x, y_top, y_bottom) are in widget-local pixels.
+    The hitbox extends ±hitbox_width_px/2 around *x*.
+    """
+    id: int                  # 0 = lowest, 7 = highest
+    note_name: str
+    frequency: float         # Hz
+    x: float = 0.0          # horizontal centre in widget pixels
+    y_top: float = 0.0      # upper attachment point (crossbar side)
+    y_bottom: float = 0.0   # lower attachment point (resonator side)
+    thickness_px: float = 4.0
+    hitbox_width_px: float = 68.0   # total hitbox width (±34 px)
     muted: bool = False
     ringing: bool = False
     gain: float = 1.0
     sample_path: str = ""
 
-    # TODO: Add animation state fields (oscillation amplitude, phase) in Phase 1
+    # --- runtime animation state (not serialised) ---
+    vibration_amp: float = 0.0   # current side-to-side displacement (px)
+
+    @property
+    def hitbox_left(self) -> float:
+        return self.x - self.hitbox_width_px / 2
+
+    @property
+    def hitbox_right(self) -> float:
+        return self.x + self.hitbox_width_px / 2
+
+    def contains_point(self, px: float, py: float) -> bool:
+        """
+        Return True when the point (px, py) falls within this string's
+        hitbox rectangle.
+        """
+        return (
+            self.hitbox_left <= px <= self.hitbox_right
+            and self.y_top <= py <= self.y_bottom
+        )
+
+    def mute(self) -> None:
+        """Mute this string (stop ringing)."""
+        self.muted = True
+        self.ringing = False
+        self.vibration_amp = 0.0
+
+    def unmute(self) -> None:
+        """Clear mute status."""
+        self.muted = False
+
+    def pluck(self) -> None:
+        """Start ringing (clears mute flag)."""
+        self.muted = False
+        self.ringing = True
+        self.vibration_amp = 1.0   # full amplitude; decays each frame
+
+    def tick_animation(self, decay: float = 0.92) -> None:
+        """
+        Called once per frame. Reduces vibration amplitude by *decay*
+        and clears ringing when amplitude falls below threshold.
+        """
+        self.vibration_amp *= decay
+        if self.vibration_amp < 0.01:
+            self.vibration_amp = 0.0
+            self.ringing = False
 
 
 @dataclass
 class TouchTrace:
-    """Tracks the full lifecycle of a single touch contact on the screen.
-
-    Used by the gesture recogniser (app/gestures.py) to classify a touch as
-    a tap, swipe, hold, or drag-mute.  A new ``TouchTrace`` is created on
-    every ``on_touch_down`` event and updated through ``on_touch_move`` and
-    ``on_touch_up``.
-
-    Attributes:
-        touch_id: Unique identifier assigned by Kivy to the touch event.
-        start_pos: Screen coordinates ``(x, y)`` where the touch began.
-        current_pos: Most recent screen coordinates of the touch.
-        start_time: Timestamp (seconds) when the touch was first registered.
-        current_time: Timestamp (seconds) of the most recent touch update.
-        crossed_strings: Ordered list of string IDs crossed by the touch so
-            far (used for swipe strumming).
-        hold_active: ``True`` once the hold-mute threshold has been reached.
     """
+    Tracks a single finger contact from touch-down to touch-up.
 
-    touch_id: int = 0
-    start_pos: Tuple[float, float] = (0.0, 0.0)
-    current_pos: Tuple[float, float] = (0.0, 0.0)
-    start_time: float = 0.0
-    current_time: float = 0.0
-    crossed_strings: List[int] = field(default_factory=list)
+    Gesture recognition (GestureRecognizer) reads and updates this
+    object as events arrive.
+    """
+    touch_id: int
+    start_pos: Tuple[float, float]
+    current_pos: Tuple[float, float]
+    start_time: float                        # seconds since epoch
+    current_time: float
+    crossed_strings: List[int] = field(default_factory=list)  # string ids
     hold_active: bool = False
 
-    # TODO: Add velocity tracking for dynamic pluck volume (Phase 1)
+    @property
+    def delta(self) -> Tuple[float, float]:
+        """Displacement vector from start to current position."""
+        return (
+            self.current_pos[0] - self.start_pos[0],
+            self.current_pos[1] - self.start_pos[1],
+        )
 
+    @property
+    def distance(self) -> float:
+        """Euclidean distance from start to current position."""
+        dx, dy = self.delta
+        return (dx * dx + dy * dy) ** 0.5
 
-@dataclass
-class TuningPreset:
-    """A named collection of note names and their target frequencies.
+    @property
+    def elapsed_ms(self) -> float:
+        """Elapsed time since touch-down in milliseconds."""
+        return (self.current_time - self.start_time) * 1000.0
 
-    Attributes:
-        name: Human-readable preset name shown in the UI dropdown.
-        notes: Ordered list of note-name strings, one per string (lowest first).
-        frequencies: Ordered list of frequencies in Hz, matching *notes*.
-    """
+    def update(self, pos: Tuple[float, float], t: float) -> None:
+        """Update current position and timestamp."""
+        self.current_pos = pos
+        self.current_time = t
 
-    name: str = ""
-    notes: List[str] = field(default_factory=list)
-    frequencies: List[float] = field(default_factory=list)
+    """Tracks a single touch interaction across its lifetime."""
 
-    # TODO: Add validation that len(notes) == len(frequencies) == 8 (Phase 1)
+    touch_id: int
+    start_pos: tuple[float, float] = (0.0, 0.0)
+    current_pos: tuple[float, float] = (0.0, 0.0)
+    start_time: float = 0.0
+    current_time: float = 0.0
+    crossed_strings: list[int] = field(default_factory=list)
+    hold_active: bool = False
+

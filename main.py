@@ -1,39 +1,22 @@
-"""
-main.py — Entry point for the Davidic Lyre Android app.
+"""Davidic Lyre for Android — entry point.
 
-Initializes the Kivy application, loads the main instrument screen,
-and sets up the audio engine.
+Starts the Kivy application, initialises the audio engine and loads the
+default D Dorian tuning preset.
 """
 
 from kivy.app import App
+from kivy.core.window import Window
 
-# TODO: Import main screen once app/screens.py is implemented
-# from app.screens import MainScreen
-
-# TODO: Import audio engine once app/audio_engine.py is implemented
-# from app.audio_engine import AudioEngine
+from app.config import COLOR_BACKGROUND
+from app.screens import MainScreen
 
 
 class DavidicLyreApp(App):
-    """Main Kivy application class for the Davidic Lyre instrument app."""
+    """Root Kivy application."""
 
     def build(self):
-        """Build and return the root widget for the application."""
-        # TODO: Initialize the audio engine
-        # self.audio_engine = AudioEngine()
-        # self.audio_engine.load_samples()
-
-        # TODO: Load and return the main instrument screen
-        # return MainScreen(audio_engine=self.audio_engine)
-
-        # Placeholder root widget until screens are implemented
-        from kivy.uix.label import Label
-        return Label(text="Davidic Lyre — Coming Soon")
-
-    def on_stop(self):
-        """Clean up resources when the app is closed."""
-        # TODO: Stop audio engine and release resources
-        pass
+        Window.clearcolor = COLOR_BACKGROUND
+        return MainScreen()
 
 
 if __name__ == "__main__":

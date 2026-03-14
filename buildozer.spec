@@ -1,81 +1,85 @@
 [app]
+title = Davidic Lyre
+package.name = davidic_lyre
+package.domain = org.davidic
+
+source.dir = .
+source.include_exts = py,png,jpg,kv,atlas,wav
+
+version = 0.1.0
+
+requirements = python3,kivy
+
+# Samsung Galaxy Fold5 inner screen (unfolded portrait)
+orientation = portrait
+
+fullscreen = 0
+
+android.permissions = VIBRATE
+android.api = 33
+android.minapi = 26
+android.ndk = 25b
+android.sdk = 33
+android.arch = arm64-v8a
+
+# Target Samsung Fold5 inner display
+android.window_softinput_mode = adjustResize
+
+[buildozer]
+log_level = 2
 
 # (str) Title of your application
 title = Davidic Lyre
 
-# (str) Package name — used as the Android package identifier segment
-package.name = davidic_lyre
+# (str) Package name
+package.name = davidiclyre
 
-# (str) Package domain — combined with package.name to form the full Android
-#       application ID: com.lefthandedluminary.davidic_lyre
-package.domain = com.lefthandedluminary
+# (str) Package domain (needed for android/ios packaging)
+package.domain = org.davidiclyre
 
-# (str) Source code directory relative to this file
+# (str) Source code where the main.py live
 source.dir = .
 
-# (list) File extensions to include from source.dir
+# (list) Source files to include (let empty to include all the files)
 source.include_exts = py,png,jpg,kv,atlas,wav
 
-# (list) Additional directories to include verbatim in the APK
-source.include_patterns = assets/audio/*,assets/images/*
-
-# (str) Application version
+# (str) Application versioning (method 1)
 version = 0.1.0
 
-# (list) Application requirements — packages built for Android by python-for-android
-requirements = python3,kivy,pyjnius,plyer,pillow
+# (list) Application requirements
+requirements = python3,kivy
 
-# (str) Presplash screen image (shown while the app is loading)
-presplash.filename = %(source.dir)s/assets/images/presplash.png
-
-# (str) Application icon
-icon.filename = %(source.dir)s/assets/images/icon.png
-
-# (str) Supported screen orientations
+# (str) Supported orientation (one of landscape, sensorLandscape, portrait or all)
 orientation = portrait
 
-# (bool) Fullscreen mode — 0 keeps the status bar visible
+# (bool) Indicate if the application should be fullscreen or not
 fullscreen = 0
 
-#
-# Android-specific settings
-#
+# (list) Permissions
+android.permissions = INTERNET
 
-# (int) Target Android API level
-android.api = 34
+# (int) Target Android API
+android.api = 33
 
-# (int) Minimum Android API level supported
-android.minapi = 26
+# (int) Minimum API
+android.minapi = 21
 
-# (int) Android NDK API level — must be >= android.minapi
-android.ndk_api = 26
+# (str) Android NDK version to use
+android.ndk = 25b
 
-# (list) Target CPU architectures
-android.archs = arm64-v8a, armeabi-v7a
+# (str) The Android arch to build for
+android.archs = arm64-v8a
 
-# (list) Android permissions — none beyond the default READ/WRITE_EXTERNAL_STORAGE
-#        needed by Kivy for audio.  Extend this list as new features require it.
-# android.permissions =
+# (bool) enables Android auto backup feature (Android API >=23)
+android.allow_backup = True
 
-# (bool) Enable AndroidX support libraries
-android.enable_androidx = True
+# (str) presplash color
+android.presplash_color = #EADEC8
 
-# (str) Android logcat filters for adb logcat (useful for debugging)
-# android.logcat_filters = *:S python:D
+[buildozer]
 
-#
-# Python for Android bootstrap
-#
-
-# (str) Bootstrap to use — sdl2 is required by Kivy
-p4a.bootstrap = sdl2
-
-#
-# Buildozer / build tool settings
-#
-
-# (int) Log verbosity: 0 = quiet, 1 = normal, 2 = verbose
+# (int) Log level (0 = error only, 1 = info, 2 = debug (with command output))
 log_level = 2
 
-# (int) Display warning if buildozer is run as root (0 = suppress warning)
+# (int) Display warning if buildozer is run as root (0 = False, 1 = True)
 warn_on_root = 1

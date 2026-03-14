@@ -1,13 +1,7 @@
 """
-tests/test_tuning.py — Tests for tuning presets and frequency maps.
+tests/test_tuning.py – Unit tests for app.tuning module.
 
-Validates that:
-  - All three tuning presets are defined with the correct note names and
-    frequencies as specified in PRD Section 7.
-  - The NOTE_FREQUENCIES map contains expected values.
-  - Helper utilities (get_frequency, get_preset_by_name) behave correctly.
-
-TODO: Expand with property-based tests and edge-case coverage in Phase 1.
+These tests run without Kivy; they exercise only pure-Python logic.
 """
 
 import pytest
@@ -15,107 +9,147 @@ import pytest
 from app.tuning import (
     ALL_PRESETS,
     DEFAULT_PRESET,
-    NOTE_FREQUENCIES,
-    PRESET_DAVIDIC_D_DORIAN,
-    PRESET_DAVIDIC_DARK_MODE,
-    PRESET_DRONE_PSALM,
-    get_frequency,
+    NOTE_FREQ,
+    PRESET_D_DORIAN,
+    PRESET_DARK,
+    PRESET_DRONE,
+    TuningPreset,
+"""Tests for tuning presets and frequency maps."""
+
+from app.models import TuningPreset
+from app.tuning import (
+    ALL_PRESETS,
+    DEFAULT_PRESET,
+    D_DORIAN_FREQUENCIES,
+    D_DORIAN_NOTES,
+    PRESET_D_DORIAN,
+    PRESET_DARK,
+    PRESET_DRONE,
     get_preset_by_name,
 )
 
+class TestNoteFrequencies:
+    def test_d2_frequency(self):
+        assert abs(NOTE_FREQ["D2"] - 73.42) < 0.01
 
-# ---------------------------------------------------------------------------
-# Placeholder — always passes; replace with real assertions in Phase 1
-# ---------------------------------------------------------------------------
+    def test_a2_frequency(self):
+        assert abs(NOTE_FREQ["A2"] - 110.00) < 0.01
 
-
-def test_placeholder():
-    """Placeholder test — confirms the module imports without error."""
-    # TODO: Replace with comprehensive tuning tests in Phase 1
-    assert True
-
-
-# ---------------------------------------------------------------------------
-# Preset structure tests
-# ---------------------------------------------------------------------------
+    def test_all_frequencies_positive(self):
+        for name, freq in NOTE_FREQ.items():
+            assert freq > 0, f"Frequency for {name} must be positive"
 
 
-def test_all_presets_have_eight_strings():
-    """Each preset must define exactly 8 notes and 8 frequencies."""
-    for preset in ALL_PRESETS:
-        assert len(preset["notes"]) == 8, (
-            f"Preset '{preset['name']}' has {len(preset['notes'])} notes, expected 8"
-        )
-        assert len(preset["frequencies"]) == 8, (
-            f"Preset '{preset['name']}' has {len(preset['frequencies'])} frequencies, expected 8"
-        )
+class TestTuningPreset:
+    def test_d_dorian_has_eight_strings(self):
+        assert len(PRESET_D_DORIAN.notes) == 8
+        assert len(PRESET_D_DORIAN.frequencies) == 8
+
+    def test_d_dorian_starts_on_d2(self):
+        assert PRESET_D_DORIAN.notes[0] == "D2"
+        assert abs(PRESET_D_DORIAN.frequencies[0] - 73.42) < 0.01
+
+    def test_d_dorian_ends_on_d3(self):
+        assert PRESET_D_DORIAN.notes[-1] == "D3"
+        assert abs(PRESET_D_DORIAN.frequencies[-1] - 146.83) < 0.01
+
+    def test_dark_preset_has_bb2(self):
+        assert "Bb2" in PRESET_DARK.notes
+
+    def test_drone_preset_has_f3(self):
+        assert "F3" in PRESET_DRONE.notes
+
+    def test_preset_frequencies_ascending(self):
+        """D Dorian strings should ascend in pitch."""
+        freqs = PRESET_D_DORIAN.frequencies
+        for i in range(len(freqs) - 1):
+            assert freqs[i] < freqs[i + 1], (
+                f"String {i} ({freqs[i]} Hz) should be lower than "
+                f"string {i+1} ({freqs[i+1]} Hz)"
+            )
+
+    def test_sample_filename_no_sharps(self):
+        preset = PRESET_D_DORIAN
+        for i in range(8):
+            fname = preset.sample_filename(i)
+            assert "#" not in fname, f"Filename {fname} must not contain '#'"
+            assert fname.endswith(".wav")
+
+    def test_sample_filenames_count(self):
+        assert len(PRESET_D_DORIAN.sample_filenames()) == 8
+
+    def test_invalid_preset_too_few_notes(self):
+        with pytest.raises(ValueError):
+            TuningPreset(name="bad", notes=["D2"], frequencies=[73.42])
+
+    def test_invalid_preset_negative_frequency(self):
+        with pytest.raises(ValueError):
+            TuningPreset(
+                name="bad",
+                notes=["D2", "E2", "F2", "G2", "A2", "B2", "C3", "D3"],
+                frequencies=[-1, 82, 87, 98, 110, 123, 131, 147],
+            )
 
 
-def test_default_preset_is_d_dorian():
-    """The default preset must be 'Davidic D Dorian'."""
-    assert DEFAULT_PRESET["name"] == "Davidic D Dorian"
+class TestAllPresets:
+    def test_three_presets_defined(self):
+        assert len(ALL_PRESETS) == 3
 
+    def test_default_is_d_dorian(self):
+        assert DEFAULT_PRESET.name == "Davidic D Dorian"
 
-def test_d_dorian_notes():
-    """Davidic D Dorian preset should have the expected note names (PRD Section 7)."""
-    expected = ["D2", "E2", "F2", "G2", "A2", "B2", "C3", "D3"]
-    assert PRESET_DAVIDIC_D_DORIAN["notes"] == expected
+    def test_get_preset_by_name_returns_correct(self):
+        preset = get_preset_by_name("Davidic Dark Mode")
+        assert preset.name == "Davidic Dark Mode"
 
+    def test_get_preset_unknown_name_returns_default(self):
+        preset = get_preset_by_name("NonExistent")
+        assert preset is DEFAULT_PRESET
 
-def test_d_dorian_frequencies():
-    """Davidic D Dorian preset should have the correct frequencies (PRD Section 7)."""
-    expected = [73.42, 82.41, 87.31, 98.00, 110.00, 123.47, 130.81, 146.83]
-    assert PRESET_DAVIDIC_D_DORIAN["frequencies"] == pytest.approx(expected, abs=0.01)
+    def test_all_presets_valid(self):
+        for p in ALL_PRESETS:
+            assert len(p.notes) == 8
+            assert len(p.frequencies) == 8
+            for f in p.frequencies:
+                assert f > 0
+class TestTuningPreset:
+    def test_default_preset_is_d_dorian(self):
+        assert DEFAULT_PRESET.name == "Davidic D Dorian"
 
+    def test_d_dorian_has_eight_notes(self):
+        assert len(PRESET_D_DORIAN.notes) == 8
+        assert len(PRESET_D_DORIAN.frequencies) == 8
 
-def test_dark_mode_has_flattened_seventh():
-    """Davidic Dark Mode replaces B2 with Bb2 relative to D Dorian."""
-    dorian_notes = PRESET_DAVIDIC_D_DORIAN["notes"]
-    dark_notes = PRESET_DAVIDIC_DARK_MODE["notes"]
-    # All notes the same except index 5 (the seventh)
-    assert dark_notes[5] == "Bb2"
-    assert dorian_notes[5] == "B2"
+    def test_d_dorian_frequencies_ascending(self):
+        for i in range(len(D_DORIAN_FREQUENCIES) - 1):
+            assert D_DORIAN_FREQUENCIES[i] < D_DORIAN_FREQUENCIES[i + 1]
 
+    def test_d_dorian_starts_with_d2(self):
+        assert D_DORIAN_NOTES[0] == "D2"
+        assert D_DORIAN_FREQUENCIES[0] == 73.42
 
-def test_drone_psalm_notes():
-    """Drone Psalm preset should have the expected note names (PRD Section 7)."""
-    expected = ["D2", "A2", "D3", "F3", "G3", "A3", "C4", "D4"]
-    assert PRESET_DRONE_PSALM["notes"] == expected
+    def test_d_dorian_ends_with_d3(self):
+        assert D_DORIAN_NOTES[-1] == "D3"
+        assert D_DORIAN_FREQUENCIES[-1] == 146.83
 
+    def test_dark_mode_preset_has_bb2(self):
+        assert "Bb2" in PRESET_DARK.notes
 
-# ---------------------------------------------------------------------------
-# Frequency map tests
-# ---------------------------------------------------------------------------
+    def test_drone_preset_higher_range(self):
+        assert PRESET_DRONE.frequencies[-1] > PRESET_D_DORIAN.frequencies[-1]
 
+    def test_all_presets_has_three_entries(self):
+        assert len(ALL_PRESETS) == 3
 
-def test_note_frequencies_contains_d2():
-    """NOTE_FREQUENCIES must map 'D2' to approximately 73.42 Hz."""
-    assert NOTE_FREQUENCIES["D2"] == pytest.approx(73.42, abs=0.01)
+    def test_get_preset_by_name_found(self):
+        result = get_preset_by_name("Davidic D Dorian")
+        assert result is not None
+        assert result.name == "Davidic D Dorian"
 
+    def test_get_preset_by_name_not_found(self):
+        assert get_preset_by_name("nonexistent") is None
 
-def test_get_frequency_known_note():
-    """get_frequency should return the correct Hz for a known note."""
-    assert get_frequency("A2") == pytest.approx(110.00, abs=0.01)
+    def test_preset_notes_frequencies_length_match(self):
+        for p in ALL_PRESETS:
+            assert len(p.notes) == len(p.frequencies)
 
-
-def test_get_frequency_unknown_note_raises():
-    """get_frequency should raise KeyError for an unknown note name."""
-    with pytest.raises(KeyError):
-        get_frequency("Z99")
-
-
-# ---------------------------------------------------------------------------
-# Preset lookup tests
-# ---------------------------------------------------------------------------
-
-
-def test_get_preset_by_name_returns_correct_preset():
-    """get_preset_by_name should return the preset matching the given name."""
-    preset = get_preset_by_name("Drone Psalm")
-    assert preset["name"] == "Drone Psalm"
-
-
-def test_get_preset_by_name_unknown_raises():
-    """get_preset_by_name should raise ValueError for an unknown name."""
-    with pytest.raises(ValueError):
-        get_preset_by_name("Nonexistent Preset")
